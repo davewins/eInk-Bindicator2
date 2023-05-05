@@ -302,30 +302,30 @@ void getBins() {
 
         todaysDate = DateTime.formatUTC(DateFormatter::DATE_ONLY).c_str();
         todaysDay = todaysDate.substring(8, 10).toInt();
-        //Serial.print("Todays day: ");
-        //Serial.println(todaysDay);
-        //Serial.print("*PreviousMonth: ");
-        //Serial.println(previous_month);
+        Serial.print("Todays day: ");
+        Serial.println(todaysDay);
+        Serial.print("*PreviousMonth: ");
+        Serial.println(previous_month);
         dayDifference = collectionDate - todaysDay;
-        //Serial.print("*DayDifference:");
-        //Serial.println(dayDifference);
-        //Serial.print("*PreviousMonthDays:");
-        //Serial.println(MonthDays[previous_month]);
-        //Serial.print("*CurrentMonthDays:");
-        //Serial.println(MonthDays[p.getMonth()]);
+        Serial.print("*DayDifference:");
+        Serial.println(dayDifference);
+        Serial.print("*PreviousMonthDays:");
+        Serial.println(MonthDays[previous_month]);
+        Serial.print("*CurrentMonthDays:");
+        Serial.println(MonthDays[p.getMonth()]);
         if (dayDifference < 0) {                                  //Below Zero means we're crossing over the month boundary
           dayDifference += MonthDays[p.getMonth()];               //So add the current months days to the difference to get the correct difference (hopefully)
-          //Serial.print("*NewDayDifference:");
-          //Serial.println(dayDifference);
+          Serial.print("*NewDayDifference:");
+          Serial.println(dayDifference);
           if ((previous_month == 0) && (p.getYear() % 4) == 0)    // Is it a leap year?
             dayDifference++;                                       // Yes.  Add 1 more day.
-          //Serial.print("*FinalDayDifference:");
-          //Serial.println(dayDifference);
+          Serial.print("*FinalDayDifference:");
+          Serial.println(dayDifference);
         }
 
         PRINT("difference = ");
         PRINTLN(dayDifference);
-        if (dayDifference < 7 && dayDifference >= 0) {           //Leave the bin colour for todays collection just in case you forgot to put the bin out!
+        if (dayDifference <= 7 && dayDifference >= 0) {           //Leave the bin colour for todays collection just in case you forgot to put the bin out!
           display.setFont(&BIGGEST_FONT);
           display.setTextColor(FG_COLOR);
           draw_string(display.width() / 2, 55, binColour, CENTER);
