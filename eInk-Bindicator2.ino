@@ -1,7 +1,7 @@
 #include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
 #include "ArduinoOTA.h"    //https://github.com/esp8266/Arduino/tree/master/libraries/ArduinoOTA
 #define LILYGO_T5_V213
-#include <boards.h>
+//#include <boards.h>
 #include <GxEPD.h>
 #include <GxDEPG0213BN/GxDEPG0213BN.h>
 #include <GxIO/GxIO_SPI/GxIO_SPI.h>
@@ -40,10 +40,10 @@
 #if defined(USING_SOFT_SPI)
 GxIO_Class io(EPD_SCLK, EPD_MISO, EPD_MOSI,  EPD_CS, EPD_DC,  EPD_RSET);
 #else
-GxIO_Class io(SPI,  EPD_CS, EPD_DC,  EPD_RSET);
+GxIO_Class io(SPI,  EPD_CS, EPD_DC,  EPD_RST);
 #endif
 
-GxEPD_Class display(io, /*RST=*/ EPD_RSET, /*BUSY=*/ EPD_BUSY); // default selection of (9), 7
+GxEPD_Class display(io, /*RST=*/ EPD_RST, /*BUSY=*/ EPD_BUSY); // default selection of (9), 7
 
 #define DEBUG_ON 1
 
@@ -109,12 +109,12 @@ void display_background()
   display.fillScreen(BG_COLOR);
   display.setTextColor(FG_COLOR);
   display.setFont(&DEFALUT_FONT);
-  display.drawLine(0, 17, display.width(), 17, FG_COLOR);
-  draw_string(display.width()-1, 10, "eBindicator", RIGHT);
-  draw_battery(1, 15);
-  draw_string(display.width() / 2, 10, date_str, CENTER);
-  draw_string(display.width()-1, display.height()-5, WiFi.localIP().toString(), RIGHT);
-  draw_string(1,display.height()-5,"Boot Count " + String(bootCount),LEFT);
+  display.drawLine(0, 20, display.width(), 20, FG_COLOR);
+  draw_string(display.width()-1, 15, "eBindicator", RIGHT);
+  draw_battery(1, 20);
+  draw_string(display.width() / 2, 15, date_str, CENTER);
+  draw_string(display.width()-1, display.height()-1, WiFi.localIP().toString(), RIGHT);
+  draw_string(1,display.height()-1,"Boot Count " + String(bootCount),LEFT);
 }
 
 void display_init()
@@ -125,7 +125,7 @@ void display_init()
   display.setRotation(1); // Use 1 or 3 for landscape modes
   display_background();
   display.setFont(&BIGGEST_FONT);
-  draw_string(display.width() / 2, display.height() / 2 + 12, "CONNECTING", CENTER);
+  draw_string(display.width() / 2, display.height() / 2 + 15, "CONNECTING", CENTER);
   display.update();
   PRINTLN("DONE");
 }
@@ -159,14 +159,29 @@ void setup() {
   bool res;
   // res = wm.autoConnect(); // auto generated AP name from chipid
   // res = wm.autoConnect("AutoConnectAP"); // anonymous ap
+  
+  //sets timeout until configuration portal gets turned off
+  //useful to make it all retry or go to sleep
+  //in seconds
+  wm.setTimeout(180);
   res = wm.autoConnect("eInk-Bindicator","password"); // password protected ap
 
   if(!res) {
       Serial.println("Failed to connect");
-      draw_string(display.width() / 2, display.height() / 2 + 12, "NO WIFI", CENTER);
+      display.fillScreen(BG_COLOR);
+      display.setFont(&DEFALUT_FONT);
+      display.drawLine(0, 20, display.width(), 20, FG_COLOR);
+      draw_string(display.width()-1, 15, "eBindicator", RIGHT);
+      draw_battery(1, 20);
+      display.setFont(&BIGGEST_FONT);
+      draw_string(display.width() / 2, display.height() / 2 + 15, "NO WIFI", CENTER);
+      display.setFont(&DEFALUT_FONT);
+      draw_string(1,display.height()-2,"Access Point: eInk-Bindicator ",LEFT);
       display.update();
       delay(5000);
-      ESP.restart();
+      begin_sleep();
+
+      //ESP.restart();
   } 
   else {
       //if you get here you have connected to the WiFi    
@@ -207,11 +222,11 @@ void setup() {
 
   display.setTextColor(FG_COLOR);
   display.setFont(&DEFALUT_FONT);
-  draw_string(display.width()-1, display.height()-5, WiFi.localIP().toString(), RIGHT);
+  draw_string(display.width()-1, display.height()-1, WiFi.localIP().toString(), RIGHT);
 
   if (setup_time() == true)
   {
-    draw_string(display.width() / 2, 10, date_str, CENTER);
+    draw_string(display.width() / 2, 20, date_str, CENTER);
   }
   
   getBins();
@@ -219,6 +234,9 @@ void setup() {
 }
 
 void getBins() {
+
+    String displayBin = "";
+    String displayDate = "";
     
     WiFiClientSecure client;
     PRINT("connecting to ");
@@ -227,7 +245,7 @@ void getBins() {
     client.setInsecure();
     if (!client.connect(host, httpsPort)) {
       PRINTLN("connection failed");
-      draw_string(display.width() / 2, display.height() / 2 + 12, "NO INTERNET", CENTER);
+      draw_string(display.width() / 2, display.height() / 2 + 20, "NO INTERNET", CENTER);
       display.update();
       delay(5000);
       ESP.restart();
@@ -263,7 +281,7 @@ void getBins() {
       const char* status = jsonBuffer["status"]; // "OK"
       PRINT("Status: ");
       PRINTLN(status);
-      JsonArray body = jsonBuffer["body"];
+      JsonArray body = jsonBuffer["body"]; 
 
       String binType = "";
       String collectionDateString = "";
@@ -273,13 +291,15 @@ void getBins() {
       String todaysDate = "";
       int todaysDay = 0;
       int dayDifference = 0;
+      int loopCounter = 0;
 
       display_background();
       
       for (JsonVariant value : body) {
-        binType = value["collectionType"].as<char*>();
-        collectionDateString = value["LongDate"].as<char*>();
-        collectionDateShortString = value["NextCollection"].as<char*>();
+        loopCounter++;
+        binType = value["collectionType"].as<String>() ;//.as<char*>();
+        collectionDateString = value["LongDate"].as<String>();
+        collectionDateShortString = value["NextCollection"].as<String>();
         collectionDate = collectionDateShortString.substring(8, 10).toInt();
 
         if (binType == "Refuse") {
@@ -325,28 +345,22 @@ void getBins() {
 
         PRINT("difference = ");
         PRINTLN(dayDifference);
-        if (dayDifference <= 7 && dayDifference >= 0) {           //Leave the bin colour for todays collection just in case you forgot to put the bin out!
-          display.setFont(&BIGGEST_FONT);
-          display.setTextColor(FG_COLOR);
-          draw_string(display.width() / 2, 55, binColour, CENTER);
-          display.setFont(&BIG_FONT);
-          draw_string(display.width() / 2, 85,collectionDateString, CENTER);
+        PRINT("loopCounter = ");
+        PRINTLN(loopCounter);
+        if (dayDifference <= 7 && dayDifference > 0) {           //Leave the bin colour for todays collection just in case you forgot to put the bin out!
+          displayBin=binColour;
+          displayDate=collectionDateString;
         }
-
-
-        //display.setFont(&BIG_FONT);
-        //display.setTextColor(FG_COLOR);
-        //if (binType == "Refuse") {
-        //  draw_string(1, 55, "Green:", LEFT);
-        //  draw_string(60,55,collectionDateString, LEFT);
-        //}
-        //if (binType == "Recycling") {
-        //  draw_string(1, 80, "Blue:", LEFT);
-        //  draw_string(60,80,collectionDateString, LEFT);
-        //}
       }
     }
-    
+
+    PRINTLN(displayBin);
+    PRINTLN(displayDate);
+    display.setFont(&BIGGEST_FONT);
+    display.setTextColor(FG_COLOR);
+    draw_string(display.width() / 2, 60, displayBin, CENTER);
+    display.setFont(&BIG_FONT);
+    draw_string(display.width() / 2, 90,displayDate, CENTER);
     display.update();
 }
 
@@ -466,7 +480,7 @@ void begin_sleep()
 {
   display.powerDown();
   long SleepTimer = (SLEEP_DURATION_MIN * 60 - ((CurrentMin % SLEEP_DURATION_MIN) * 60 + CurrentSec)); //Some ESP32 are too fast to maintain accurate time
-  esp_sleep_enable_timer_wakeup((SleepTimer + 20) * 1000000LL);                                        // Added 20-sec extra delay to cater for slow ESP32 RTC timers
+  esp_sleep_enable_timer_wakeup((SleepTimer + 20) * 1000000LL);  //did have LL at the end of 100000                                      // Added 20-sec extra delay to cater for slow ESP32 RTC timers
 
   PRINTLN("INFO: Entering " + String(SleepTimer) + "-secs of sleep time");
   PRINTLN("INFO: Awake for : " + String((millis() - StartTime) / 1000.0, 3) + "-secs");
