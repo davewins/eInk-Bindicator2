@@ -1,5 +1,5 @@
 #include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
-#include "ArduinoOTA.h"    //https://github.com/esp8266/Arduino/tree/master/libraries/ArduinoOTA
+#include <ArduinoOTA.h>    //https://github.com/esp8266/Arduino/tree/master/libraries/ArduinoOTA
 #define LILYGO_T5_V213
 //#include <boards.h>
 #include <GxEPD.h>
@@ -16,10 +16,11 @@
 #include <DateTime.h>
 #include <ArduinoJson.h>
 #include <WiFiClientSecure.h>
+#include <HTTPClient.h>
 
 #define SHOW_PERCENT_VOLTAGE true
 
-#define VOLTAGE_DIVIDER_RATIO 6.907 //7.0 Varies from board to board
+#define VOLTAGE_DIVIDER_RATIO 7.0 //7.0 Varies from board to board
 #define FG_COLOR GxEPD_BLACK
 #define BG_COLOR GxEPD_WHITE
 
@@ -84,7 +85,9 @@ const size_t capacity = JSON_ARRAY_SIZE(4) + JSON_OBJECT_SIZE(2) + 4 * JSON_OBJE
 //Your PostCode Here - remember - this is only for Tewkesbury Borough Council right now!
 String postCode = "GL207RL";
 //This is the REST API that Tewkesbury use
-String url = "/general/rounds/" + postCode + "/nextCollection";
+//String url = "/general/rounds/" + postCode + "/nextCollection";
+//Latest version of the API that they use, including the unique property reference
+String url = "https://api-2.tewkesbury.gov.uk/incab/rounds/200004323387/next-collection";
 byte MonthDays[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}; //specify days in each month
 String binToCollect = "";
 String binColour = "";
@@ -99,7 +102,7 @@ void setup_pins()
 {
   PRINT("INFO: Setup pins... ");
   pinMode(BUILTIN_LED_PIN, OUTPUT);
-  pinMode(FLASH_CS_PIN, OUTPUT);
+  //pinMode(FLASH_CS_PIN, OUTPUT);
   pinMode(VOLTAGE_PIN, INPUT);
   PRINTLN("OK");
 }
@@ -157,8 +160,8 @@ void setup() {
   // then goes into a blocking loop awaiting configuration and will return success result
 
   bool res;
-  // res = wm.autoConnect(); // auto generated AP name from chipid
-  // res = wm.autoConnect("AutoConnectAP"); // anonymous ap
+  //res = wm.autoConnect(); // auto generated AP name from chipid
+  //res = wm.autoConnect("AutoConnectAP"); // anonymous ap
   
   //sets timeout until configuration portal gets turned off
   //useful to make it all retry or go to sleep
@@ -233,12 +236,65 @@ void setup() {
   begin_sleep();
 }
 
+// Function to calculate the number of days in a month
+int daysInMonth(int month, int year) {
+  const int daysPerMonth[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+  int days = daysPerMonth[month - 1];
+  // Check for February in a leap year
+  if (month == 2 && ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0))) {
+    days = 29;
+  }
+  return days;
+}
+
+int daysBetweenDates(int startYear, int startMonth, int startDate, int endYear, int endMonth, int endDate) {
+  int totalDays = 0;
+    PRINT("Start Year: ");
+  PRINTLN(startYear);
+    PRINT("Start Month: ");
+  PRINTLN(startMonth);
+    PRINT("Start Date: ");
+  PRINTLN(startDate);
+    PRINT("End Year: ");
+  PRINTLN(endYear);
+    PRINT("End Month: ");
+  PRINTLN(endMonth);
+    PRINT("End Date: ");
+  PRINTLN(endDate);
+
+  // If it's the same month and year, calculate the difference directly
+  if (startYear == endYear && startMonth == endMonth) {
+    return endDate - startDate;
+  }
+
+  // Calculate days in the starting month from the start date to the end of the month
+  totalDays += daysInMonth(startMonth, startYear) - startDate + 1;
+
+  // Calculate days in the ending month from the beginning of the month to the end date
+  totalDays += endDate;
+
+  // Iterate through the months between the starting and ending months, adding the number of days in each month
+  for (int year = startYear, month = startMonth + 1; !(year == endYear && month == endMonth);) {
+    if (month > 12) {
+      month = 1;
+      year++;
+    }
+    totalDays += daysInMonth(month, year);
+    month++;
+  }
+
+  return totalDays;
+}
+
 void getBins() {
 
     String displayBin = "";
     String displayDate = "";
     
     WiFiClientSecure client;
+    HTTPClient http;
+    http.useHTTP10(true);
+
     PRINT("connecting to ");
     PRINTLN(host);
 
@@ -254,29 +310,25 @@ void getBins() {
     PRINT("requesting URL: ");
     PRINTLN(url);
 
-    client.print(String("GET ") + url + " HTTP/1.1\r\n" +
-                 "Host: " + host + "\r\n" +
-                 "User-Agent: ESP8266\r\n" +
-                 "Connection: close\r\n\r\n");
+    // Send request
+    http.begin(client, url);
+    http.GET();
+    String line = http.getString();
 
-    PRINTLN("request sent");
-    while (client.connected()) {
-      String line = client.readStringUntil('\n');
-      if (line == "\r") {
-        PRINTLN("headers received");
-        break;
-      }
-    }
-    String line = client.readStringUntil('\n');
-
+    DynamicJsonDocument jsonBuffer(capacity);
+    auto error = deserializeJson(jsonBuffer, line);
+    //auto error = deserializeJson(jsonBuffer, http.getStream());
+    // Print the response
+    //PRINTLN(line);
     PRINTLN("reply was:");
     PRINTLN("==========");
     PRINTLN(line);
     PRINTLN("==========");
     PRINTLN("closing connection");
 
-    DynamicJsonDocument jsonBuffer(capacity);
-    auto error = deserializeJson(jsonBuffer, line);
+    // Disconnect
+    http.end();
+
     if (!error) {
       const char* status = jsonBuffer["status"]; // "OK"
       PRINT("Status: ");
@@ -284,77 +336,64 @@ void getBins() {
       JsonArray body = jsonBuffer["body"]; 
 
       String binType = "";
+      String binColour = "";
       String collectionDateString = "";
       String collectionDateShortString = "";
       String nextBin = "";
       int collectionDate = 0;
+      int collectionMonth = 0;
+      int collectionYear = 0;
       String todaysDate = "";
       int todaysDay = 0;
-      int dayDifference = 0;
-      int loopCounter = 0;
+      int todaysMonth = 0;
+      int todaysYear = 0;
 
       display_background();
+
+      todaysDate = DateTime.formatUTC(DateFormatter::DATE_ONLY).c_str();
+      PRINTLN(todaysDate);
+      todaysDay = todaysDate.substring(8, 10).toInt();
+      todaysMonth = todaysDate.substring(5, 7).toInt();
+      todaysYear = todaysDate.substring(0, 4).toInt();
+      PRINT(todaysYear);
+      PRINT("/");
+      PRINT(todaysMonth);
+      PRINT("/");
+      PRINTLN(todaysDay);
       
       for (JsonVariant value : body) {
-        loopCounter++;
+        //loopCounter++;
         binType = value["collectionType"].as<String>() ;//.as<char*>();
         collectionDateString = value["LongDate"].as<String>();
         collectionDateShortString = value["NextCollection"].as<String>();
-        collectionDate = collectionDateShortString.substring(8, 10).toInt();
+        collectionDate = collectionDateShortString.substring(8, 10).toInt(); // Extracting the day part
+        collectionMonth = collectionDateShortString.substring(5, 7).toInt(); // Extracting the month part
+        collectionYear = collectionDateShortString.substring(0, 4).toInt(); // Extracting the year part
+        PRINTLN("BIN: " + binType);
+        if (binType != "Food" && binType != "Garden")
+        {
+          PRINTLN("Working on current bin: " + binType);
+          if (binType == "Refuse") {
+            binColour = "GREEN";
+          } else {
+            binColour = "BLUE";
+          }
+          PRINTLN("Colour: " + binColour);
 
-        if (binType == "Refuse") {
-          binColour = "GREEN";
-        }
-        if (binType == "Recycling") {
-          binColour = "BLUE";
-        }
-        if (binType == "Food" || binType == "Garden") {
-          break;
-        }
-
-        DateTimeParts p = DateTime.getParts();
-        Serial.printf("Month: %04d\n", p.getMonth());
-        int previous_month = (p.getMonth() - 1);                      //calculate the index for the previous month (keeping in mind
-        //that the indexing starts at 0
-        if (p.getMonth() == 0) {                                          //if the current month is 0, the previous month is 11 (zero based indexes)
-          previous_month = 11;
-        }
-
-        todaysDate = DateTime.formatUTC(DateFormatter::DATE_ONLY).c_str();
-        todaysDay = todaysDate.substring(8, 10).toInt();
-        Serial.print("Todays day: ");
-        Serial.println(todaysDay);
-        Serial.print("*PreviousMonth: ");
-        Serial.println(previous_month);
-        dayDifference = collectionDate - todaysDay;
-        Serial.print("*DayDifference:");
-        Serial.println(dayDifference);
-        Serial.print("*PreviousMonthDays:");
-        Serial.println(MonthDays[previous_month]);
-        Serial.print("*CurrentMonthDays:");
-        Serial.println(MonthDays[p.getMonth()]);
-        if (dayDifference < 0) {                                  //Below Zero means we're crossing over the month boundary
-          dayDifference += MonthDays[p.getMonth()];               //So add the current months days to the difference to get the correct difference (hopefully)
-          Serial.print("*NewDayDifference:");
-          Serial.println(dayDifference);
-          if ((previous_month == 0) && (p.getYear() % 4) == 0)    // Is it a leap year?
-            dayDifference++;                                       // Yes.  Add 1 more day.
-          Serial.print("*FinalDayDifference:");
-          Serial.println(dayDifference);
-        }
-
-        PRINT("difference = ");
-        PRINTLN(dayDifference);
-        PRINT("loopCounter = ");
-        PRINTLN(loopCounter);
-        if (dayDifference <= 7 && dayDifference > 0) {           //Leave the bin colour for todays collection just in case you forgot to put the bin out!
-          displayBin=binColour;
-          displayDate=collectionDateString;
+          int days = daysBetweenDates(todaysYear, todaysMonth, todaysDay, collectionYear, collectionMonth, collectionDate);
+          PRINT("Number of days between the two dates: ");
+          PRINTLN(days);
+          if (days <= 7 && days > 0) {           //Leave the bin colour for todays collection just in case you forgot to put the bin out!
+             displayBin=binColour;
+             displayDate=collectionDateString;
+          }
         }
       }
     }
 
+    PRINT("Chosen Bin: ");
     PRINTLN(displayBin);
+    PRINT("To Be Collected On: ");
     PRINTLN(displayDate);
     display.setFont(&BIGGEST_FONT);
     display.setTextColor(FG_COLOR);
@@ -382,7 +421,7 @@ float read_battery_voltage()
 void draw_battery(const int x, int y)
 {
   float minLiPoV = 3.4;
-  float maxLiPoV = 4.1;
+  float maxLiPoV = 4.01;
   float percentage = 1.0;
   // analog value = Vbat / 2
   float voltageRaw = read_battery_voltage();
